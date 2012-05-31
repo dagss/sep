@@ -240,11 +240,11 @@ Also, in the example below, one could set ``tp_as_number`` to ``0``, but the
     The ``slot_table_size`` is used in the case of subclassing
     another extensible type (see subclassing rules below).
 
-    Before calling this function, ``etp_count`` and ``etp_custom_slots`` should
-    be filled in.
+    Before calling this function, ``etp_custom_slot_count`` and
+    ``etp_custom_slot_table`` should be filled in.
 
     The function a) imports the ``extensibletype`` metaclass and
-    sets ``type->ob_type`` to it, b) patches the ``etp_custom_slots`` table in
+    sets ``type->ob_type`` to it, b) patches ``etp_custom_slot_table`` in
     response to inheritance, c) calls ``PyType_Ready``,
     d) updates ``tp_flags``.
 
@@ -260,10 +260,10 @@ Also, in the example below, one could set ``tp_as_number`` to ``0``, but the
 Subclassing
 '''''''''''
 
-**Statically allocated C subclasses:** Since ``etp_custom_slots`` is
+**Statically allocated C subclasses:** Since ``etp_custom_slot_table`` is
 statically allocated, it should be over-allocated and padded with
 slots with ``0`` as ID. The number of non-zero slots should be filled
-in ``etp_count``, while the table size is passed to
+in ``etp_custom_slot_count``, while the table size is passed to
 ``PyExtensibleType_Ready``. The table is then modified to inherit the
 custom slots just like the built-in slots:
 
