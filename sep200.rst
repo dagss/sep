@@ -41,10 +41,44 @@ Examples uses:
    it finds a function pointer with a "dd->d" signature tagged to the
    Python object
 
- * Standardize the Cython ``cdef class`` vtable
+ * Standardize the Cython ``cdef class`` vtable (and make it much
+   more flexible)
 
  * Standardize the internal memoryview representation of Cython
    (which is much faster than passing around ``Py_buffer``)
+
+Technical overview
+------------------
+
+The idea is to annotate types and objects with a very fast dict/hash
+table, suitable for being used as a virtual method table, slots for
+custom C APIs, C-level metadata, and so on.  We use *perfect hashing*,
+so that lookups are guaranteed to always hit on the first try if the
+entry is present in the table, in order to avoid costly branch
+misses. In our benchmarks a lookup can be done with 0.5-1 ns overhead
+over a plain table lookup (micro-benchmark, 1.9 GHz Intel Nehalem).  A
+more traditional lookup of a capsule in a Python dict would likely be
+on the order of 50ns, making it prohibitive to use as a replacement
+for a virtual function table.  Construction of the table is more
+costly and takes 10-50 microseconds (same CPU).
+
+On the provider (table exporter) side, the specification is quite
+complicated, which seems necesarry to achieve both performance and
+flexibility.  On the consumer side, it is still possible to make
+things very simply if one does not cares about performance.
+
+The concepts:
+
+ - The ``extensibletype`` metaclass is used to annotate types
+   and objects with the fast-dict.
+
+ - The keys of the fast-dict are always byte strings (which may
+   contain "\0" and be the seralization). These are *interned*
+   in a string interning registry.
+
+ - It is also necesarry to construct a *pre-hash* of each key,
+   using the *md5 algorithm*.
+
 
 
 Implementation and lack of runtime dependency
