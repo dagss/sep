@@ -16,16 +16,20 @@ about Python objects. In essence, one would like more slots in
 impractical, slow, and require the GIL.
 
 The solution today is often to rely on
-``PyObject_TypeCheck``. However, this works against standardizing
-things across libraries, and creates one-to-many situations (only one
-implementor of an API, but many consumers), rather than many-to-many
-where there can be multiple implementors and multiple consumers of a
-mutually agreed-upon standard (think "domain-specific PEP 3118s").
+``PyObject_TypeCheck``. However, this a) easily causes ABI breakage,
+b) works against standardizing things across libraries, creating
+one-to-many situations (only one implementor of an API, but many
+consumers), rather than many-to-many where there can be multiple
+implementors and multiple consumers of a mutually agreed-upon standard.
+Think "domain-specific PEP 3118s.
 
 To overcome this problem, the usual approach is to propose a
 PEP. However, that process is a) slow, b) not suitable for very
 domain-specific tasks, and c) the result is not backwards-compatible
-with earlier versions of Python.
+with earlier versions of Python.  The idea is to annotate types and
+objects with a very fast dict/hash table with at least an order of
+magnitude better performance than Python dictionaries (for this
+purpose).
 
 This SEP introduces a metaclass on the C level which can be used to
 provide effectively an unlimited number of custom slots in the
@@ -58,34 +62,74 @@ entry is present in the table, in order to avoid costly branch
 misses. In our benchmarks a lookup can be done with 0.5-1 ns overhead
 over a plain table lookup (micro-benchmark, 1.9 GHz Intel Nehalem).  A
 more traditional lookup of a capsule in a Python dict would likely be
-on the order of 50ns, making it prohibitive to use as a replacement
-for a virtual function table.  Construction of the table is more
-costly and takes 10-50 microseconds (same CPU).
+on the order of 50--100ns, making it prohibitive to use as a replacement
+for a virtual function table.  Construction of a 64-slot perfect hash
+table takesabout 40 microseconds (same CPU).
 
 On the provider (table exporter) side, the specification is quite
 complicated, which seems necesarry to achieve both performance and
 flexibility.  On the consumer side, it is still possible to make
-things very simply if one does not cares about performance.
+things very simple if one does not cares about performance.
 
 The concepts:
 
  - The ``extensibletype`` metaclass is used to annotate types
    and objects with the fast-dict.
 
- - The keys of the fast-dict are always byte strings (which may
-   contain "\0" and be the seralization). These are *interned*
-   in a string interning registry.
+ - The  keys of  the  fast-dict  are always  byte  strings (which  may
+   however contain  "\\0" and be some object  seralization). These are
+   *interned* in a string interning registry.
 
- - It is also necesarry to construct a *pre-hash* of each key,
-   using the *md5 algorithm*.
+ - It is necesarry to construct a *pre-hash* of each key, using (e.g.) the
+   md5 algorithm. This pre-hash is computed and stored on the consumer
+   side at compile-time or load-time, and used by the provider when
+   constructing the hash table
+
+ - To construct a table, a parametrized hash function is used (which
+   is a simple transformation of the pre-hash), and the table consists
+   of both the hash function parameters and the entries
+   themselves. The parameters and a perfect entry order can be found
+   in linear time.
+
+
+Making library dependence optional
+----------------------------------
+
+The run-time support code is available in the ``extensibletype``
+package: https://github.com/dagss/pyextensibletype
+
+Introducing a new library as a dependency of both NumPy and Cython
+would not work well. Therefore the run-time support code is available
+in two modes; a full version is available as a standalone library, but
+there is also a reduced version that can be bundled with NumPy, Cython,
+etc. Each module implementing this SEP may contain the code for the
+``extensibletype`` metaclass, provided in a short header file
+(``include/extensibletype.h``).
+
+An ``extensibletype`` module in ``sys.path`` overrides any bundled
+implementation. If no such module is found, the first
+participating module that is imported will create it and populate
+it with the bundled code.
+
+The relevant rendezvous symbols by fully qualified names are:
+
+ - ``extensibletype.extensibletype_v1`` - The ``extensibletype`` metaclass
+ - ``extensibletype.interner_v1`` - The string interning registry API
+   in a capsule
+
+The remainder of this SEP details the workings of the core code that
+can be bundled by any participating library, and which everybody
+must agree on before anything is released into the wild.
+
+The full package can provide additional functionality to allow
+introspection of the extra slots from Python etc.; however such
+additional non-core features are introduced in the package the usual
+way and doesn't need any SEPs.
 
 
 
-Implementation and lack of runtime dependency
----------------------------------------------
-
-An implementation is available from
-https://github.com/dagss/pyextensibletype
+The custom slot table
+---------------------
 
 Every type exporting custom slots a) sets a new metaclass
 ``extensibletype`` as its metaclass (the ``ob_type->ob_type`` of the
@@ -95,16 +139,6 @@ PyExtensibleType_TPFLAGS_IS_EXTENSIBLE``).  The metaclass is necesarry
 to ensure that the custom slots table is inherited to subclasses
 created in Python.  See the discussion section for justifications for
 also using the flag bit.
-
-Requiring a common run-time dependency would be a significant disadvantage.
-Instead, each participating provider library should contain the code for the
-``extensibletype`` metaclass, provided in a short header file
-(``include/extensibletype.h``). The first such module that gets initialized
-puts the metaclass in the ``extensibletype_v1`` attribute in the ``_extensibletype``
-module; later modules simply look up the metaclass there.
-
-The custom slot table
----------------------
 
 The metaclass is used to annotate each participating type with a table
 of custom slots::
