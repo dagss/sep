@@ -1,0 +1,123 @@
+SEP 201 - Interning byte strings
+================================
+
+======   ====================
+Author   Dag Sverre Seljebotn
+Status   Draft
+======   ====================
+
+Background
+----------
+
+In this document "string" will refer to byte strings without
+any encoding information -- similar to the ``bytes`` type in Python.
+
+Interning is useful since string comparisons can be done in O(1)
+rather than O(n). This specification details the API of a common
+string interner. The motivation is to use this as a component in SEP
+200, where the slot keys are interned.
+
+Non-Pythonic API
+----------------
+
+It is useful in general to make features accessible from generic C
+code without pulling in the entire C API. One specific hope is that
+SEP 200 may in time be a bridge between libraries in multiple
+languages, not only for CPython.
+
+Also, having the possibility of avoiding the use of the GIL is
+important so that, e.g., JIT compilation can happen on a separate CPU
+core from the executing Python thread (and a JIT compiler would
+presumably want to intern strings).
+
+Rendezvous and avoiding common run-time dependency
+--------------------------------------------------
+
+Like SEP 200, it's important to introduce a common run-time dependency for
+modules implemented in Cython, as well as NumPy. Therefore the SEP 200
+mechanism is used:
+
+ 1. Attempt to import the ``extensibletype`` module, and look up the
+    ``interner_v1`` attribute in it.
+ 2. If that fails, plug in a bundled string interned and make it
+    available for other modules to find later.
+
+This provides an upgrade path. The bundle-able reference
+implementation interner prioritizes brevity. Another more
+sophisticated interner (allowing use without the GIL; using smarter
+allocation strategies) can be made available in ``sys.path``.
+
+The the ``extensibletype.interner_v1`` we store a ``PyCapsule``
+containing a pointer to the ``string_interner_t`` struct detailed
+in the next section. The capsule name is "sep201".
+
+Interner API
+------------
+
+An interned string is represented by ``interned_string_t*``::
+
+    typedef {
+        char *buf;
+        uint64_t hash;
+        uint32_t len;
+    } interned_string_t;
+
+It is the ``interned_string_t*`` which is unique; so if you have
+two such pointers ``a`` and ``b``, and ``a != b``, it follows that
+their ``buf`` contains different values.
+
+The hash
+''''''''
+
+Each string also has a cryptographic-strength hash
+(since this is very convenient for SEP 200). We define this to
+be the lower 64 bits of an md5 hash, where the md5 is interpreted
+as big-endian; specifically::
+
+    eval('0x' + hashlib.md5(b).hexdigest()[16:])
+
+(Note: If one wants to switch to something that is quicker to compute,
+murmurhash3 seems like the most mature option.)
+
+The interner
+''''''''''''
+
+::
+
+    #define STRING_INTERNER_FLAG_REQUIRES_CPYTHON_GIL 1
+
+    typedef struct {
+        uint64_t flags;
+        void *ctx;
+
+        int (*intern)(void *ctx, char *buf, uint32_t len, int is_literal,
+                      interned_string_t *out);
+        int (*acquire)(void *ctx, interned_string_t *s);
+        int (*release)(void *ctx, interned_string_t *s);
+    } string_interner_t;
+
+Notes:
+
+ - The ``ctx`` from the struct is simply passed on to the functions
+
+ - When ``is_literal == 0``, the interner *must* copy the input string
+   on the heap (if it isn't already interned). If ``is_literal`` is
+   set, it is assumed that the string is never modified and lives longer
+   than the interner.
+
+ - The result from ``intern`` already has an incremented refcount, so
+   you normally don't need ``acquire``
+
+ - Reference counting is in effect, so call ``release`` when one is done
+
+ - Python exceptions are *not* propagated, instead errors happens through
+   return codes
+
+ - If the requires GIL flag is set, you need the GIL -- otherwise the
+   interner should do its own locking under the hood
+
+Return codes:
+
+ - ``0``: OK
+ - ``1``: Out of memory
+ - ``2``: Unknown error
