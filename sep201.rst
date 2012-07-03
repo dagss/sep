@@ -39,8 +39,8 @@ mechanism is used:
 
  1. Attempt to import the ``extensibletype`` module, and look up the
     ``interner_v1`` attribute in it.
- 2. If that fails, plug in a bundled string interned and make it
-    available for other modules to find later.
+ 2. If that fails, one can plug in a bundled string interner and make
+    it available for other modules to find later.
 
 This provides an upgrade path. The bundle-able reference
 implementation interner prioritizes brevity. Another more
@@ -64,10 +64,12 @@ An interned string is represented by ``interned_string_t*``::
 
 It is the ``interned_string_t*`` which is unique; so if you have
 two such pointers ``a`` and ``b``, and ``a != b``, it follows that
-their ``buf`` contains different values.
+their ``buf`` contains different data.
 
-The hash
-''''''''
+The string *must* be null-terminated, and ``len`` does *not* include
+this terminating null. It may contain null characters in the stream
+as well (which are obviously included in the length).
+
 
 Each string also has a cryptographic-strength hash
 (since this is very convenient for SEP 200). We define this to
