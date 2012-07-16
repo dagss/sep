@@ -93,7 +93,7 @@ The interner
         void *ctx;
 
         int (*intern)(void *ctx, char *buf, uint32_t len, int is_literal,
-                      interned_string_t *out);
+                      interned_string_t **out);
         int (*acquire)(void *ctx, interned_string_t *s);
         int (*release)(void *ctx, interned_string_t *s);
     } string_interner_t;
